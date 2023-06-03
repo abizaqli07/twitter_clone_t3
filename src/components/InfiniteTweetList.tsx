@@ -1,4 +1,10 @@
 import InfiniteScroll from "react-infinite-scroll-component"
+import ProfileImage from "./ProfileImage"
+import Link from "next/link"
+import { useSession } from "next-auth/react"
+import { VscHeart, VscHeartFilled } from 'react-icons/vsc'
+import IconHoverEffect from "./IconHoverEffect"
+import { api } from "~/utils/api"
 
 type Tweet = {
   id: string,
@@ -16,12 +22,111 @@ type Tweet = {
 type InfiniteTweetsProps = {
   isLoading: boolean,
   isError: boolean,
-  hasMore: boolean,
+  hasMore: boolean | undefined,
   fetchNewTweets: () => Promise<unknown>
   tweets?: Tweet[]
 }
 
-const InfiniteTweetList = ({ tweets, isLoading, isError, hasMore, fetchNewTweets }: InfiniteTweetsProps) => {
+type HeartButtonProps = {
+  isLoading: boolean,
+  onClick: () => void,
+  likedByMe: boolean,
+  likeCount: number
+}
+
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "short" })
+
+const HeartButton = ({ likedByMe, likeCount, isLoading, onClick }: HeartButtonProps) => {
+  const session = useSession();
+  const HeartIcon = likedByMe ? VscHeartFilled : VscHeart
+
+  if (session.status != 'authenticated') {
+    return (
+      <div className="mb-1 mt-1 items-center gap-3 self-start text-gray-500">
+        <HeartIcon />
+        <span>{likeCount}</span>
+      </div>
+    )
+  }
+
+  return (
+    <button 
+      disabled={isLoading} 
+      onClick={onClick} 
+      className={`group -ml-2 items-center gap-1 self-start flex transition-colors duration-200 ${likedByMe
+      ? "text-red-500"
+      : "text-gray-500 hover:text-red-500 focus-visible:text-red-500"}`}
+    >
+      <IconHoverEffect red>
+        <HeartIcon className={`transition-colors duration-200 ${likedByMe
+          ? " fill-red-500"
+          : "fill-gray-500 group-hover:fill-red-500 group-focus-visible:fill-red-500"}`}
+        />
+      </IconHoverEffect>
+      <span>{likeCount}</span>
+    </button>
+  )
+}
+
+const TweetCard = ({ id, user, content, createdAt, likeCount, likedByMe }: Tweet) => {
+  const trpcUtils = api.useContext()
+  const toggleLike = api.tweet.toggleLike.useMutation({
+    onSuccess: ({ addedLike }) => {
+      const updateData: Parameters<typeof trpcUtils.tweet.infiniteFeed.setInfiniteData>[1] = (oldData) => {
+        if(oldData == null) return;
+        const countModifier = addedLike ? 1 : -1;
+
+        return {
+          ...oldData,
+          pages: oldData.pages.map((page) => {
+            return {
+              ...page,
+              tweets: page.tweets.map((tweet) => {
+                if(tweet.id === id) {
+                  return {
+                    ...tweet,
+                    likeCount: tweet.likeCount + countModifier,
+                    likedByMe: addedLike,
+                  }
+                }
+
+                return tweet;
+              })
+            }
+          })
+        }
+      }
+
+
+      trpcUtils.tweet.infiniteFeed.setInfiniteData({}, updateData)
+    }
+  })
+
+  function handleToggleLike() {
+    toggleLike.mutate({ id })
+  }
+
+  return (
+    <li className=" flex gap-4 border-b px-4 py-4">
+      <Link href={`/profiles/${user.id}`}>
+        <ProfileImage src={user.image} />
+      </Link>
+      <div className=" flex flex-grow flex-col">
+        <div className=" flex gap-1">
+          <Link className=" font-bold outline-none hover:underline focus-visible:underline" href={`/profiles/${user.id}`}>
+            {user.name}
+          </Link>
+          <span className=" text-gray-500">-</span>
+          <span className=" text-gray-500">{dateTimeFormatter.format(createdAt)}</span>
+        </div>
+        <p className=" whitespace-pre-wrap">{content}</p>
+        <HeartButton onClick={handleToggleLike} isLoading={toggleLike.isLoading} likedByMe={likedByMe} likeCount={likeCount} />
+      </div>
+    </li>
+  )
+}
+
+const InfiniteTweetList = ({ tweets, isLoading, isError, hasMore = false, fetchNewTweets }: InfiniteTweetsProps) => {
 
   if (isLoading) return <h1>Loading...</h1>
   if (isError) return <h1>Error...</h1>
@@ -38,7 +143,7 @@ const InfiniteTweetList = ({ tweets, isLoading, isError, hasMore, fetchNewTweets
       loader={"Loading..."}
     >
       {tweets.map((tweet) => {
-        return <div key={tweet.id}>{tweet.content}</div>
+        return <TweetCard key={tweet.id} {...tweet} />
       })}
     </InfiniteScroll>
   )
